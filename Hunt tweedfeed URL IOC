@@ -1,0 +1,27 @@
+//tweedfeed URL IOC 
+
+
+let MaxAge = ago(30d);
+let domain_whitelist = pack_array(
+'XXX' // Some URL/Domain you want to whitelist.
+);
+let TweetFeed = materialize (
+    (externaldata(report:string)
+    [@"https://raw.githubusercontent.com/0xDanielLopez/TweetFeed/master/week.csv"]
+    with (format = "txt"))
+    | extend report = parse_csv(report)
+    | extend Type = tostring(report[2])
+    | where Type in('url','domain')
+    | extend RemoteUrl = tostring(report[3])
+    | where RemoteUrl !in(domain_whitelist)
+    | extend Tag = tostring(report[4])
+    | extend Tweet = tostring(report[5])
+    | project RemoteUrl, Tag, Tweet 
+);
+union (
+TweetFeed
+    | join (
+        DeviceNetworkEvents
+    | where Timestamp > MaxAge
+    ) on RemoteUrl
+) | project Timestamp, DeviceName, RemoteUrl, Tag, Tweet
