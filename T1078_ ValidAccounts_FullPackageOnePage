@@ -1,0 +1,88 @@
+//T1078_ ValidAccounts_FullPackageOnePage
+//Hypothesis #1
+
+//Multiple password resets by user Account manipulation including password reset may aid adversaries in maintaining access to credentials and certain permission levels within an environment.
+
+ 
+
+//Sentinel query for how many times user changed password
+
+
+
+//Sentinel query for how many times user changed password
+
+let PerUserThreshold = 5;
+let TotalThreshold = 100;
+let action = dynamic(["change", "changed", "reset"]);
+let pWord = dynamic(["password", "credentials"]);
+let PasswordResetMultiDataSource =
+(union isfuzzy=true
+SecurityEvent
+| where EventID in ("4723","4724")
+| project TimeGenerated, Computer, AccountType, Account, Type, TargetUserName)
+//Password reset events
+//4723: An attempt was made to change an account's password
+//4724: An attempt was made to reset an accounts password
+;
+let pwrmd = PasswordResetMultiDataSource
+| project TimeGenerated, Computer, AccountType, Account, Type, TargetUserName;
+(union isfuzzy=true  
+(pwrmd
+| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), Computerlist = make_set(Computer, 25), AccountType = make_set(AccountType, 25), Computer = arg_max(Computer , TimeGenerated), TargetUserList = make_set(TargetUserName, 25), TargetUserName = arg_max(TargetUserName, TimeGenerated), Total=count() by Account, Type
+| where Total > PerUserThreshold
+| extend ResetPivot = "PerUserReset"),  
+(pwrmd
+| summarize StartTimeUtc = min(TimeGenerated), EndTimeUtc = max(TimeGenerated), ComputerList = make_set(Computer, 25), AccountList = make_set(Account, 25), AccountType = make_set(AccountType, 25), Computer = arg_max(Computer , TimeGenerated), TargetUserList = make_set(TargetUserName, 25), TargetUserName = arg_max(TargetUserName, TimeGenerated), Total=count() by Type
+| where Total > TotalThreshold
+| extend ResetPivot = "TotalUserReset")
+)
+| extend timestamp = StartTimeUtc, AccountCustomEntity = Account, HostCustomEntity = Computer
+ 
+
+//2. Hypothesis #2
+
+//Defender query for account logon for multiple hosts  
+
+
+
+DeviceLogonEvents
+| where LogonType in ("Network", "RemoteInteractive")
+    and isnotempty(AccountName)
+| summarize logonsets = makeset(DeviceName, 2000) by AccountName
+| project AccountName, HostsAccessed = array_length(logonsets), logonsets
+| where HostsAccessed > 3
+| sort by HostsAccessed
+3. Hypothesis #3
+
+//Multiple accounts logged into the same machine simultaneously
+
+
+
+Multiple accounts logged into the same machine simultaneouslyDeviceLogonEvents
+| where LogonType in ("Network", "RemoteInteractive")
+    and isnotempty(AccountName)
+| summarize logonsets = makeset(DeviceName, 2000) by AccountName
+| project AccountName, HostsAccessed = array_length(logonsets), logonsets
+| where HostsAccessed > 3
+| sort by HostsAccessed
+4. hypothesis #4
+
+//Account Created With System Level Privileges
+
+//MICROSOFT DEFENDER - EDR
+
+
+
+DeviceEvents
+| where ActionType contains "UserAccountCreated"
+| where InitiatingProcessAccountName endswith "$"
+| project Timestamp, ActionType, AccountName, InitiatingProcessAccountName, InitiatingProcessAccountSid, DeviceName
+MICROSOFT SENTINEL - ENDPOINT:WINEVENTLOG
+
+
+
+SecurityEvent
+| where TimeGenerated >= ago(7d)
+| where EventID =="4720"
+| project TimeGenerated, Computer, Activity, EventID, accountCreated=TargetUserName, accountResponsible=SubjectUserName
+| where accountResponsible endswith "$"
